@@ -1,50 +1,65 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import Home from './pages/Home';
+import { auth } from './services/firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import LoginFirebase from './pages/LoginFirebase';
+import RegisterFirebase from './pages/RegisterFirebase';
+import HomeFirebase from './pages/HomeFirebase';
 import Game from './pages/Game';
 import AtmosphereEffects from './components/AtmosphereEffects';
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem('token'));
-  const [user, setUser] = useState(
-    localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')) : null
-  );
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
+  // Listen for Firebase auth state changes
   useEffect(() => {
-    if (token) {
-      localStorage.setItem('token', token);
-    } else {
-      localStorage.removeItem('token');
-    }
-  }, [token]);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        // User is signed in
+        setUser({
+          uid: currentUser.uid,
+          email: currentUser.email,
+          username: currentUser.displayName || currentUser.email.split('@')[0],
+        });
+        localStorage.setItem('userId', currentUser.uid);
+      } else {
+        // User is signed out
+        setUser(null);
+        localStorage.removeItem('userId');
+      }
+      setLoading(false);
+    });
 
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('user');
-    }
-  }, [user]);
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, []);
 
-  const handleLogin = (newToken, userData) => {
-    setToken(newToken);
-    setUser(userData);
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      localStorage.clear();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
-  const handleLogout = () => {
-    // Clear token from state FIRST
-    setToken(null);
-    setUser(null);
-    // Then clear ALL localStorage entries explicitly
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('gameId');
-    localStorage.removeItem('gameCode');
-    // Full clear as backup
-    localStorage.clear();
-  };
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        background: '#1a0f0f',
+        color: '#fff',
+        fontSize: '24px',
+      }}>
+        🐺 Chargement...
+      </div>
+    );
+  }
 
   return (
     <Router>
@@ -52,24 +67,22 @@ function App() {
       <Routes>
         <Route 
           path="/login" 
-          element={token ? <Navigate to="/home" /> : <Login onLogin={handleLogin} />} 
+          element={user ? <Navigate to="/home" /> : <LoginFirebase onLogin={(uid, userData) => setUser({ uid, ...userData })} />} 
         />
         <Route 
           path="/register" 
-          element={token ? <Navigate to="/home" /> : <Register onLogin={handleLogin} />} 
+          element={user ? <Navigate to="/home" /> : <RegisterFirebase onLogin={(uid, userData) => setUser({ uid, ...userData })} />} 
         />
         <Route 
           path="/home" 
-          element={token ? <Home user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} 
+          element={user ? <HomeFirebase user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} 
         />
         <Route 
           path="/game/:gameId" 
-          element={token ? <Game user={user} /> : <Navigate to="/login" />} 
+          element={user ? <Game user={user} /> : <Navigate to="/login" />} 
         />
-        <Route path="/" element={<Navigate to={token ? "/home" : "/login"} />} />
+        <Route path="/" element={<Navigate to={user ? "/home" : "/login"} />} />
       </Routes>
     </Router>
   );
 }
-
-export default App;
