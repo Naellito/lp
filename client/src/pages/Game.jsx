@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { gameAPI } from '../services/api';
+import { gameAPIFirebase } from '../services/gameAPIFirebase';
 import './Game.css';
 
 function Game({ user }) {
   const { gameId } = useParams();
   const navigate = useNavigate();
+  
+  // Alias pour compatibilité avec le code existant
+  const gameAPI = gameAPIFirebase;
+  
   const [game, setGame] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -51,9 +55,20 @@ function Game({ user }) {
 
   useEffect(() => {
     loadGame();
-    const interval = setInterval(loadGame, 500); // Rafraîchir toutes les 500ms
-    return () => clearInterval(interval);
-  }, [gameId]);
+    // Rafraîchir toutes les 2 secondes
+    const interval = setInterval(loadGame, 2000);
+    
+    // Cleanup: quitter la partie si le composant est démonté
+    return () => {
+      clearInterval(interval);
+      // Supprimer la partie si le joueur est le seul et quitte
+      if (user?.uid && gameId && game?.players?.length === 1) {
+        gameAPI.leaveGame(gameId, user.uid).catch(err => {
+          console.error('Error leaving game on unmount:', err);
+        });
+      }
+    };
+  }, [gameId, user?.uid]);
 
   // Jouer la musique de fond quand la phase change
   useEffect(() => {
@@ -89,13 +104,10 @@ function Game({ user }) {
 
   // Surveiller les annonces de mort
   useEffect(() => {
-    console.log('useEffect death - game.announcedDeathPlayer:', game?.announcedDeathPlayer, 'local announcedDeathPlayer:', announcedDeathPlayer);
     if (game && game.announcedDeathPlayer && game.announcedDeathPlayer !== announcedDeathPlayer) {
-      console.log('Showing death notification for:', game.announcedDeathPlayer);
-      const killedPlayer = game.players.find(p => p.user._id === game.announcedDeathPlayer || p.user === game.announcedDeathPlayer);
-      console.log('Killed player found:', killedPlayer);
+      const killedPlayer = game.players.find(p => p.uid === game.announcedDeathPlayer);
       if (killedPlayer) {
-        const username = typeof killedPlayer.user === 'object' ? killedPlayer.user.username : killedPlayer.username;
+        const username = killedPlayer.username || (killedPlayer.user?.username);
         setGameMessage(`💀 ${username} a été tué par les loups cette nuit...`);
         setGameMessageType('death');
         setShowGameMessage(true);
@@ -107,13 +119,10 @@ function Game({ user }) {
 
   // Surveiller les annonces d'élimination
   useEffect(() => {
-    console.log('useEffect elimination - game.announcedEliminationPlayer:', game?.announcedEliminationPlayer, 'local announcedEliminationPlayer:', announcedEliminationPlayer);
     if (game && game.announcedEliminationPlayer && game.announcedEliminationPlayer !== announcedEliminationPlayer) {
-      console.log('Showing elimination notification for:', game.announcedEliminationPlayer);
-      const votedPlayer = game.players.find(p => p.user._id === game.announcedEliminationPlayer || p.user === game.announcedEliminationPlayer);
-      console.log('Voted player found:', votedPlayer);
+      const votedPlayer = game.players.find(p => p.uid === game.announcedEliminationPlayer);
       if (votedPlayer) {
-        const username = typeof votedPlayer.user === 'object' ? votedPlayer.user.username : votedPlayer.username;
+        const username = votedPlayer.username || (votedPlayer.user?.username);
         setGameMessage(`⚖️ ${username} a été éliminé par le vote...`);
         setGameMessageType('elimination');
         setShowGameMessage(true);
@@ -125,8 +134,20 @@ function Game({ user }) {
 
   const loadGame = async () => {
     try {
-      const response = await gameAPI.getGame(gameId);
-      const gameData = response.data.game;
+      const gameData = await gameAPIFirebase.getGame(gameId);
+      
+      // Si le jeu n'existe pas
+      if (!gameData) {
+        console.error('Game not found:', gameId);
+        stopBackgroundMusic();
+        stopWolfHowlCycle();
+        setError('Partie non trouvée');
+        setTimeout(() => {
+          navigate('/home');
+        }, 2000);
+        setLoading(false);
+        return;
+      }
       
       // Détecter si la partie vient de démarrer (utiliser ref pour suivre l'état précédent)
       if (previousStatusRef.current === 'waiting' && gameData.status === 'in-progress') {
@@ -184,16 +205,13 @@ function Game({ user }) {
       }
       
       // Vérifier si l'utilisateur est l'hôte
-      const userIsHost = gameData.host && gameData.host._id === user?.id;
+      const userIsHost = gameData.host === user?.uid;
       if (userIsHost) {
         setIsHost(true);
       }
 
       // Récupérer le rôle de l'utilisateur
-      const playerData = gameData.players.find(p => {
-        const pUserId = typeof p.user === 'object' ? p.user._id : p.user;
-        return pUserId === user?.id || pUserId?.toString() === user?.id?.toString();
-      });
+      const playerData = gameData.players.find(p => p.uid === user?.uid);
       
       if (playerData) {
         setUserRole(playerData.role);
@@ -226,26 +244,14 @@ function Game({ user }) {
       setLoading(false);
     } catch (err) {
       console.error('Error loading game:', err);
-      // Si la partie n'existe plus (404), afficher le message et rediriger
-      if (err.response?.status === 404) {
-        // Arrêter la musique et les hurlements
-        stopBackgroundMusic();
-        stopWolfHowlCycle();
-        setGameEndMessage('Le créateur a mis fin à la partie');
-        setShowGameEndMessage(true);
-        setTimeout(() => {
-          navigate('/home');
-        }, 2000);
-      } else {
-        setError('Erreur chargement partie');
-      }
+      setError(err.message || 'Erreur chargement partie');
       setLoading(false);
     }
   };
 
   const handleStartGame = async () => {
     try {
-      await gameAPI.startGame(gameId);
+      await gameAPIFirebase.startGame(gameId);
       // Le polling via loadGame va détecter le changement de status et afficher l'animation
       loadGame();
     } catch (err) {
@@ -409,20 +415,20 @@ function Game({ user }) {
   const handleVote = async (targetPlayerId) => {
     try {
       playSoundEffect('vote');
-      await gameAPI.votePlayer(gameId, targetPlayerId);
+      await gameAPI.castDayVote(gameId, user?.uid, targetPlayerId);
       loadGame();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur vote');
+      setError(err.message || 'Erreur vote');
     }
   };
 
   const handleWolfVote = async (targetPlayerId) => {
     try {
       playSoundEffect('vote');
-      await gameAPI.wolfVote(gameId, targetPlayerId);
+      await gameAPI.castWolfVote(gameId, user?.uid, targetPlayerId);
       loadGame();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur vote loup');
+      setError(err.message || 'Erreur vote loup');
     }
   };
 
@@ -431,7 +437,7 @@ function Game({ user }) {
       await gameAPI.killPlayer(gameId, targetPlayerId);
       loadGame();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur élimination');
+      setError(err.message || 'Erreur élimination');
     }
   };
 
@@ -444,7 +450,7 @@ function Game({ user }) {
       loadGame(); // Recharger pour récupérer l'état mis à jour
     } catch (err) {
       console.error('Error announcing death:', err);
-      setError(err.response?.data?.message || 'Erreur annonce mort');
+      setError(err.message || 'Erreur annonce mort');
     }
   };
 
@@ -457,7 +463,7 @@ function Game({ user }) {
       loadGame(); // Recharger pour récupérer l'état mis à jour
     } catch (err) {
       console.error('Error announcing elimination:', err);
-      setError(err.response?.data?.message || 'Erreur annonce élimination');
+      setError(err.message || 'Erreur annonce élimination');
     }
   };
 
@@ -465,7 +471,7 @@ function Game({ user }) {
   const handleSeerAction = async (targetPlayerId) => {
     try {
       playSoundEffect('magic');
-      const response = await gameAPI.seerAction(gameId, targetPlayerId);
+      const response = await gameAPI.seerAction(gameId, user?.uid, targetPlayerId);
       setSeerResult(response.seenPlayerRole);
       setSeerTarget(targetPlayerId);
       setGameMessage(`✨ Vous avez vu que ce joueur est ${response.seenPlayerRole === 'Loup-Garou' ? '🐺 Loup-Garou' : '👤 Villageois'}`);
@@ -474,7 +480,7 @@ function Game({ user }) {
       setTimeout(() => setShowGameMessage(false), 4000);
       loadGame();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur action voyante');
+      setError(err.message || 'Erreur action voyante');
     }
   };
 
@@ -482,7 +488,7 @@ function Game({ user }) {
   const handleWitchAction = async (targetPlayerId, action) => {
     try {
       playSoundEffect('magic');
-      const response = await gameAPI.witchAction(gameId, action, targetPlayerId);
+      const response = await gameAPI.witchAction(gameId, user?.uid, targetPlayerId, action);
       setWitchAction(action);
       setWitchTarget(targetPlayerId);
       const actionMsg = action === 'save' ? '🛡️ sauvé' : '💀 tué';
@@ -492,14 +498,14 @@ function Game({ user }) {
       setTimeout(() => setShowGameMessage(false), 4000);
       loadGame();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur action sorcière');
+      setError(err.message || 'Erreur action sorcière');
     }
   };
 
   const handleDayVote = async (targetPlayerId) => {
     try {
       playSoundEffect('vote');
-      await gameAPI.dayVote(gameId, targetPlayerId);
+      await gameAPI.castDayVote(gameId, user?.uid, targetPlayerId);
       loadGame();
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur vote jour');
@@ -511,7 +517,7 @@ function Game({ user }) {
       await gameAPI.eliminatePlayer(gameId, targetPlayerId);
       loadGame();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur élimination');
+      setError(err.message || 'Erreur élimination');
     }
   };
 
@@ -525,7 +531,7 @@ function Game({ user }) {
     }
     
     // Vérifier si c'est le joueur actuel
-    const isCurrentPlayer = (typeof player.user === 'object' ? player.user._id : player.user) === user?.id;
+    const isCurrentPlayer = (player.uid || player.user?._id) === user?.uid;
     
     // Le joueur voit toujours son propre rôle
     if (isCurrentPlayer) {
@@ -539,8 +545,8 @@ function Game({ user }) {
     
     // Trouver le rôle du joueur actuel pour vérifier les loups
     const currentPlayerData = game.players.find(p => {
-      const pUserId = typeof p.user === 'object' ? p.user._id : p.user;
-      return pUserId === user?.id || pUserId?.toString() === user?.id?.toString();
+      const pUserId = p.uid || (typeof p.user === 'object' ? p.user._id : p.user);
+      return pUserId === user?.uid;
     });
     
     // Les Loups-Garous voient les rôles des autres Loups
@@ -568,7 +574,7 @@ function Game({ user }) {
     setGeneralChatMessage('');
     
     // Envoyer au serveur (sans recharger)
-    gameAPI.sendMessage(gameId, messageText, 'general')
+    gameAPI.sendMessage(gameId, user?.uid, messageText, 'general')
       .catch(err => console.error('Erreur envoi message:', err));
   };
 
@@ -588,7 +594,7 @@ function Game({ user }) {
     setRoleChatMessage('');
     
     // Envoyer au serveur (sans recharger)
-    gameAPI.sendMessage(gameId, messageText, 'role')
+    gameAPI.sendMessage(gameId, user?.uid, messageText, 'role')
       .catch(err => console.error('Erreur envoi message:', err));
   };
 
@@ -619,7 +625,7 @@ function Game({ user }) {
   const handleLeaveGameConfirm = async () => {
     setShowLeaveConfirm(false);
     try {
-      const response = await gameAPI.leaveGame(gameId);
+      const response = await gameAPI.leaveGame(gameId, user?.uid);
       
       // Afficher le message
       if (isHost) {
@@ -634,7 +640,7 @@ function Game({ user }) {
         navigate('/home');
       }, 2000);
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur lors de la quittance');
+      setError(err.message || 'Erreur lors de la quittance');
     }
   };
 
@@ -697,6 +703,26 @@ function Game({ user }) {
         <div className="shooting-star star-4"></div>
         <div className="shooting-star star-5"></div>
       </div>
+
+      {/* Écran de chargement */}
+      {loading || !game ? (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh',
+          color: '#fff',
+          fontSize: '24px',
+          flexDirection: 'column',
+          gap: '20px'
+        }}>
+          <div style={{animation: 'spin 1s linear infinite'}} >🐺</div>
+          <div>Chargement de la partie...</div>
+          <div style={{fontSize: '12px', color: '#aaa'}}>loading={String(loading)} game={String(!!game)}</div>
+        </div>
+      ) : (
+      <>
+
       <motion.header 
         className="game-header"
         initial={{ opacity: 0, y: -20 }}
@@ -787,11 +813,11 @@ function Game({ user }) {
           <div className="players-list">
             {game.players.map((player) => (
               <div 
-                key={player.user._id || player.user} 
+                key={player.uid} 
                 className={`player-item ${!player.isAlive ? 'dead' : ''} ${
-                  gamePhase === 'phase2' && wolfVotes[player.user._id] && (isNarrator || userRole === 'Loup-Garou') ? 'voted-for' : ''
+                  gamePhase === 'phase2' && wolfVotes[player.uid] && (isNarrator || userRole === 'Loup-Garou') ? 'voted-for' : ''
                 } ${
-                  gamePhase === 'phase4' && dayVotes[player.user._id] ? 'voted-for' : ''
+                  gamePhase === 'phase4' && dayVotes[player.uid] ? 'voted-for' : ''
                 }`}
               >
                 <div className="player-avatar">
@@ -799,12 +825,12 @@ function Game({ user }) {
                 </div>
                 <div className="player-info">
                   <div className="player-name">
-                    {typeof player.user === 'object' ? player.user.username : player.username}
-                    {isNarrator && gamePhase === 'phase2' && wolfVotes[player.user._id] && (
-                      <span className="vote-count">({wolfVotes[player.user._id].length} 🐺)</span>
+                    {player.username}
+                    {isNarrator && gamePhase === 'phase2' && wolfVotes[player.uid] && (
+                      <span className="vote-count">({wolfVotes[player.uid].length} 🐺)</span>
                     )}
-                    {gamePhase === 'phase4' && dayVotes[player.user._id] && (
-                      <span className="vote-count">({dayVotes[player.user._id].length} ✓)</span>
+                    {gamePhase === 'phase4' && dayVotes[player.uid] && (
+                      <span className="vote-count">({dayVotes[player.uid].length} ✓)</span>
                     )}
                   </div>
                   <div className="player-role-small">
@@ -814,25 +840,25 @@ function Game({ user }) {
 
                 {/* Boutons pour Phase 2 - Vote des loups */}
                 {gamePhase === 'phase2' && userRole === 'Loup-Garou' && player.isAlive && player.role !== 'Loup-Garou' && (
-                  <button className="vote-btn wolf-btn" onClick={() => handleWolfVote(player.user._id)} title="Voter pour tuer">
+                  <button className="vote-btn wolf-btn" onClick={() => handleWolfVote(player.uid)} title="Voter pour tuer">
                     🐺
                   </button>
                 )}
 
                 {/* Bouton Voyante - Voir rôle */}
-                {gamePhase === 'phase2' && userSpecialRole === 'Voyante' && player.isAlive && (typeof player.user === 'object' ? player.user._id : player.user) !== user?.id && (
-                  <button className="vote-btn seer-btn" onClick={() => handleSeerAction(player.user._id)} title="Voir le rôle">
+                {gamePhase === 'phase2' && userSpecialRole === 'Voyante' && player.isAlive && (player.uid || player.user?._id) !== user?.uid && (
+                  <button className="vote-btn seer-btn" onClick={() => handleSeerAction(player.uid)} title="Voir le rôle">
                     👁️
                   </button>
                 )}
 
                 {/* Boutons Sorcière - Sauver ou Tuer */}
-                {gamePhase === 'phase2' && userSpecialRole === 'Sorcière' && player.isAlive && (typeof player.user === 'object' ? player.user._id : player.user) !== user?.id && (
+                {gamePhase === 'phase2' && userSpecialRole === 'Sorcière' && player.isAlive && (player.uid || player.user?._id) !== user?.uid && (
                   <div className="witch-action-buttons">
-                    <button className="vote-btn witch-save" onClick={() => handleWitchAction(player.user._id, 'save')} title="Sauver">
+                    <button className="vote-btn witch-save" onClick={() => handleWitchAction(player.uid, 'save')} title="Sauver">
                       🛡️
                     </button>
-                    <button className="vote-btn witch-kill" onClick={() => handleWitchAction(player.user._id, 'kill')} title="Tuer">
+                    <button className="vote-btn witch-kill" onClick={() => handleWitchAction(player.uid, 'kill')} title="Tuer">
                       💀
                     </button>
                   </div>
@@ -840,21 +866,21 @@ function Game({ user }) {
 
                 {/* Bouton pour narrateur tuer en phase 2 */}
                 {gamePhase === 'phase2' && isNarrator && player.isAlive && (
-                  <button className="kill-btn" onClick={() => handleKillPlayer(player.user._id)} title="Tuer ce joueur">
+                  <button className="kill-btn" onClick={() => handleKillPlayer(player.uid)} title="Tuer ce joueur">
                     ☠️
                   </button>
                 )}
 
                 {/* Boutons pour Phase 4 - Vote des villageois */}
-                {gamePhase === 'phase4' && player.isAlive && (typeof player.user === 'object' ? player.user._id : player.user) !== user?.id && (
-                  <button className="vote-btn day-btn" onClick={() => handleDayVote(player.user._id)} title="Voter pour éliminer">
+                {gamePhase === 'phase4' && player.isAlive && (player.uid || player.user?._id) !== user?.uid && (
+                  <button className="vote-btn day-btn" onClick={() => handleDayVote(player.uid)} title="Voter pour éliminer">
                     🗳️
                   </button>
                 )}
 
                 {/* Bouton pour narrateur éliminer en phase 4 */}
                 {gamePhase === 'phase4' && isNarrator && player.isAlive && (
-                  <button className="eliminate-btn" onClick={() => handleEliminatePlayer(player.user._id)} title="Éliminer ce joueur">
+                  <button className="eliminate-btn" onClick={() => handleEliminatePlayer(player.uid)} title="Éliminer ce joueur">
                     ⚖️
                   </button>
                 )}
@@ -989,13 +1015,13 @@ function Game({ user }) {
                 <h3>🗳️ Phase 4 - Vote d'élimination</h3>
                 <p>Votez pour éliminer un joueur</p>
                 <div className="vote-buttons">
-                  {game.players.filter(p => p.isAlive && (p.user._id || p.user) !== user?.id).map((player) => (
+                  {game.players.filter(p => p.isAlive && (p.uid || p.user?._id) !== user?.uid).map((player) => (
                     <button 
-                      key={player.user._id || player.user}
+                      key={player.uid || player.user?._id}
                       className="vote-button"
-                      onClick={() => handleVote(player.user._id || player.user)}
+                      onClick={() => handleVote(player.uid || player.user?._id)}
                     >
-                      {typeof player.user === 'object' ? player.user.username : player.username}
+                      {player.username || (player.user?.username)}
                     </button>
                   ))}
                 </div>
@@ -1237,6 +1263,8 @@ function Game({ user }) {
           </div>
         </motion.footer>
       )}
+      </>
+    )}
     </motion.div>
   );
 }

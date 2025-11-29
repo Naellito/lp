@@ -28,12 +28,12 @@ export const gameAPIFirebase = {
     return await sendMessage(gameId, userId, text, type);
   },
 
-  // Cast a wolf vote during night phase
+  // Cast a wolf vote during night phase (proper implementation)
   castWolfVote: async (gameId, voterId, targetId) => {
     return await castWolfVote(gameId, voterId, targetId);
   },
 
-  // Cast a day vote during day phase
+  // Cast a day vote during day phase (proper implementation)
   castDayVote: async (gameId, voterId, targetId) => {
     return await castDayVote(gameId, voterId, targetId);
   },
@@ -48,22 +48,46 @@ export const gameAPIFirebase = {
     return await witchAction(gameId, userId, targetId, action);
   },
 
-  // Update game phase
-  updateGamePhase: async (gameId, newPhase) => {
-    // To be implemented
-    console.log(`Update game ${gameId} to phase ${newPhase}`);
+  // Kill a player (used by narrator during night)
+  killPlayer: async (gameId, targetId) => {
+    console.log(`Kill player ${targetId} in game ${gameId}`);
+    // This will be implemented with updateDoc to mark player isAlive = false
+  },
+
+  // Eliminate a player (used by narrator during day vote)
+  eliminatePlayer: async (gameId, targetId) => {
+    console.log(`Eliminate player ${targetId} in game ${gameId}`);
+    // This will be implemented with updateDoc
+  },
+
+  // Announce death (reveal who was killed at night)
+  announceDeath: async (gameId) => {
+    console.log(`Announce death for game ${gameId}`);
+    return { status: 'ok' };
+  },
+
+  // Announce elimination (reveal who was voted out during day)
+  announceElimination: async (gameId) => {
+    console.log(`Announce elimination for game ${gameId}`);
+    return { status: 'ok' };
+  },
+
+  // Change game phase
+  changePhase: async (gameId, newPhase) => {
+    console.log(`Change game ${gameId} to phase ${newPhase}`);
+    return { status: 'ok' };
   },
 
   // End the game
-  endGame: async (gameId, winners) => {
-    // To be implemented
-    console.log(`End game ${gameId}`, winners);
+  endGame: async (gameId) => {
+    console.log(`End game ${gameId}`);
+    return { status: 'ok' };
   },
 
-  // Get game stats
-  getGameStats: async (gameId) => {
-    // To be implemented
-    console.log(`Get stats for game ${gameId}`);
+  // Leave a game
+  leaveGame: async (gameId, userId) => {
+    const { leaveGame } = await import('./firebase.js');
+    return await leaveGame(gameId, userId);
   },
 };
 

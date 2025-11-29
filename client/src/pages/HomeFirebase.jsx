@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createGame, getGameByCode, joinGame, listGames } from '../services/firebase';
 import './Home.css';
@@ -13,21 +13,28 @@ function HomeFirebase({ user, onLogout }) {
   const [gameName, setGameName] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(12);
   const [gameCode, setGameCode] = useState('');
+  const [gamesLoaded, setGamesLoaded] = useState(false);
 
+  // Charger les jeux SEULEMENT quand on passe à l'onglet "rejoindre"
   useEffect(() => {
-    loadGames();
-  }, []);
-
-  const loadGames = async () => {
-    try {
-      // À implémenter avec Firestore
-      console.log('Loading games from Firestore...');
-      setGames([]);
-    } catch (err) {
-      console.error('Erreur chargement parties:', err);
-      setGames([]);
+    if (activeTab === 'join' && !gamesLoaded) {
+      loadGames();
     }
-  };
+  }, [activeTab, gamesLoaded]);
+
+  const loadGames = useCallback(async () => {
+    try {
+      setLoading(true);
+      const availableGames = await listGames();
+      setGames(availableGames || []);
+      setGamesLoaded(true);
+    } catch (err) {
+      console.error('❌ Erreur chargement parties:', err);
+      setGames([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const handleCreateGame = async (e) => {
     e.preventDefault();
@@ -39,10 +46,10 @@ function HomeFirebase({ user, onLogout }) {
       const gameRef = await createGame(user.uid, gameName, maxPlayers, 'classic');
       setGameName('');
       
-      // Rediriger vers la partie créée après 300ms pour la transition
+      // Rediriger vers la partie créée après 1s pour laisser le temps à Firestore de persister
       setTimeout(() => {
         navigate(`/game/${gameRef.id}`);
-      }, 300);
+      }, 1000);
     } catch (err) {
       setError(err.message || 'Erreur lors de la création');
       setLoading(false);
@@ -56,13 +63,16 @@ function HomeFirebase({ user, onLogout }) {
     setLoading(true);
 
     try {
+      console.log('🔗 Searching for game with code:', gameCode);
       const game = await getGameByCode(gameCode);
+      console.log('🔗 Game found:', game);
       if (!game) {
-        setError('Partie non trouvée');
+        setError('Partie non trouvée avec le code: ' + gameCode);
         setLoading(false);
         return;
       }
 
+      console.log('🔗 Joining game:', game.id);
       await joinGame(game.id, user.uid, user.username);
       setGameCode('');
       
@@ -71,6 +81,7 @@ function HomeFirebase({ user, onLogout }) {
         navigate(`/game/${game.id}`);
       }, 300);
     } catch (err) {
+      console.error('🔗 Error joining game:', err);
       setError(err.message || 'Erreur lors de la connexion');
       setLoading(false);
     }
@@ -211,10 +222,22 @@ function HomeFirebase({ user, onLogout }) {
         </div>
 
         <div className="games-list-panel">
-          <h2>🎮 Parties disponibles</h2>
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+            <h2>🎮 Parties disponibles</h2>
+            <button 
+              onClick={() => {setGamesLoaded(false); loadGames();}}
+              className="horror-button"
+              style={{padding: '8px 16px', fontSize: '14px'}}
+              disabled={loading}
+            >
+              🔄 Rafraîchir
+            </button>
+          </div>
           <div className="games-grid">
             {games.length === 0 ? (
-              <p className="no-games">Aucune partie disponible</p>
+              <p className="no-games">
+                {loading ? '⏳ Chargement des parties...' : 'Aucune partie disponible'}
+              </p>
             ) : (
               games.map(game => (
                 <div key={game.id} className="game-card">
