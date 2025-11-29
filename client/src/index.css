@@ -1,0 +1,116 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --dark-1: #1a1a1a;
+  --dark-2: #2d2d2d;
+  --dark-3: #3d3d3d;
+  --night-blue: #0f172e;
+  --night-deep: #0a0f1a;
+  --accent: #d4a574;
+  --accent-light: #e8c4a0;
+  --glow: #d4a574;
+  --text: #f5f1ed;
+  --muted: #a0a0a0;
+  --shadow: rgba(212, 165, 116, 0.1);
+}
+
+body {
+  margin: 0;
+  font-family: 'Arial', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, var(--night-deep) 0%, var(--dark-1) 50%, var(--dark-2) 100%);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: 
+    radial-gradient(ellipse at top, transparent 0%, rgba(0, 0, 0, 0.8) 100%),
+    url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' /%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.05'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 1;
+}
+
+#root {
+  position: relative;
+  z-index: 2;
+}
+
+.horror-title {
+  font-family: 'Arial', sans-serif;
+  color: var(--accent-light);
+  text-shadow: 
+    0 0 5px rgba(168, 216, 255, 0.3),
+    2px 2px 0 rgba(0, 0, 0, 0.3);
+  letter-spacing: 2px;
+}
+
+.creepy-text {
+  font-family: 'Arial', sans-serif;
+  font-weight: 600;
+}
+
+.blood-drip {
+  position: relative;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-20px); }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(168, 216, 255, 0.15); }
+  50% { box-shadow: 0 0 15px rgba(168, 216, 255, 0.25); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+
+.moon {
+  position: fixed;
+  top: 50px;
+  right: 100px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #fff, #e0e7ff);
+  box-shadow: 
+    0 0 60px rgba(224, 231, 255, 0.6),
+    0 0 100px rgba(224, 231, 255, 0.3),
+    inset -20px -20px 40px rgba(0, 0, 0, 0.2);
+  z-index: 0;
+  animation: pulse 4s ease-in-out infinite;
+}
+
+input, button {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+button:hover {
+  transform: translateY(-2px);
+}
+
+button:active {
+  transform: translateY(0);
+}
